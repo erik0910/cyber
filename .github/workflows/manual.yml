@@ -1,6 +1,4 @@
-# This is a basic workflow that is manually triggered
-
-name: Generate SBOM
+name: Generate SBOM (macOS & Windows)
 
 on:
   push:
@@ -10,41 +8,62 @@ on:
 
 jobs:
   generate_sbom:
-    runs-on: macOS
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up JDK
-      uses: actions/setup-java@v3
+    - name: Set up Environment (OS-Specific)
+      if: ${{ matrix.os == 'macos-latest' }}
+      uses: actions/setup-java@v3 # Ejemplo para Java, ajusta según tu proyecto
       with:
-        java-version: '11' # o la versión que uses
+        java-version: '11'
         distribution: 'adoptopenjdk'
 
-    - name: Set up Maven
-      uses: actions/setup-maven@v3
+    - name: Set up Environment (OS-Specific)
+      if: ${{ matrix.os == 'windows-latest' }}
+      uses: actions/setup-java@v3 # Ejemplo para Java, ajusta según tu proyecto
       with:
-        maven-version: '3.8.x'
+        java-version: '11'
+        distribution: 'adoptopenjdk'
 
-    - name: Generate SBOM with CycloneDX Maven Plugin
+    - name: Install Syft (macOS)
+      if: ${{ matrix.os == 'macos-latest' }}
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+    - name: Install Syft (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      run: |
+        Invoke-WebRequest -Uri https://raw.githubusercontent.com/anchore/syft/main/install.ps1 -OutFile install.ps1
+        ./install.ps1 -InstallDir 'C:\Program Files\syft'
+        $env:PATH += ";C:\Program Files\syft"
+        syft --version # Verify installation
+
+    - name: Generate SBOM with Syft
       id: generate
-      run: mvn -B -Dcyclonedx.outputFormat=json -DoutputFile=bom.json org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
+      run: syft . -o cyclonedx-json=bom.json
 
     - name: Upload SBOM as artifact
       uses: actions/upload-artifact@v3
       with:
-        name: sbom
+        name: sbom-${{ matrix.os }}
         path: bom.json
-        
+
+    # Opcional: Subir a Dependency-Track (se ejecutará en ambos OS)
     - name: Get Project ID from Dependency-Track
+      if: env.DEPENDENCY_TRACK_API_KEY && env.DEPENDENCY_TRACK_PROJECT_NAME
       id: get_project_id
       run: |
-        PROJECT_ID=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}" "${{ env.DEPENDENCY_TRACK_URL }}/api/v1/project/lookup?name=${{ env.DEPENDENCY_TRACK_PROJECT_NAME }}" | jq -r '.uuid')
+        PROJECT_ID=$(curl -s -H "X-Api-Key: ${{ env.DEPENDENCY_TRACK_API_KEY }}" "${{ env.DEPENDENCY_TRACK_URL }}/api/v1/project/lookup?name=${{ env.DEPENDENCY_TRACK_PROJECT_NAME }}" | jq -r '.uuid')
         echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_OUTPUT
       env:
-        DEPENDENCY_TRACK_URL: 'http://localhost:8080/' # Reemplaza
-        DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }} # Configura como secreto en GitHub
+        DEPENDENCY_TRACK_URL: 'http://localhost:8080' # Reemplaza si es diferente
+        DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }} # Configura como secreto
         DEPENDENCY_TRACK_PROJECT_NAME: 'SbomLocal' # Reemplaza
       shell: bash
 
@@ -52,13 +71,12 @@ jobs:
       if: steps.get_project_id.outputs.PROJECT_ID
       run: |
         curl -X PUT \
-          -H "X-Api-Key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}" \
+          -H "X-Api-Key: ${{ env.DEPENDENCY_TRACK_API_KEY }}" \
           -F "bomFile=@bom.json" \
           "${{ env.DEPENDENCY_TRACK_URL }}/api/v1/bom?projectId=${{ steps.get_project_id.outputs.PROJECT_ID }}"
-        echo "SBOM subido exitosamente a Dependency-Track"
+        echo "SBOM subido exitosamente a Dependency-Track from ${{ matrix.os }}"
       env:
-        DEPENDENCY_TRACK_URL: 'http://localhost:8080/' # Reemplaza
-        DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }} # Configura como secreto en GitHub
+        DEPENDENCY_TRACK_URL: 'http://localhost:8080' # Reemplaza si es diferente
+        DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }} # Configura como secreto
       shell: bash
-
-    
+      continue-on-error: true # Opcional: No fallar el workflow si la subida falla
