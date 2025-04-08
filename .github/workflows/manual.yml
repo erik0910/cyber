@@ -17,20 +17,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up Environment (OS-Specific)
-      if: ${{ matrix.os == 'macos-latest' }}
-      uses: actions/setup-java@v3 # Ejemplo para Java, ajusta según tu proyecto
-      with:
-        java-version: '11'
-        distribution: 'adoptopenjdk'
-
-    - name: Set up Environment (OS-Specific)
-      if: ${{ matrix.os == 'windows-latest' }}
-      uses: actions/setup-java@v3 # Ejemplo para Java, ajusta según tu proyecto
-      with:
-        java-version: '11'
-        distribution: 'adoptopenjdk'
-
     - name: Install Syft (macOS)
       if: ${{ matrix.os == 'macos-latest' }}
       run: |
@@ -46,7 +32,7 @@ jobs:
 
     - name: Generate SBOM with Syft
       id: generate
-      run: syft . -o cyclonedx-json=bom.json
+      run: syft ~/ -o cyclonedx-json=bom.json
 
     - name: Upload SBOM as artifact
       uses: actions/upload-artifact@v3
