@@ -1,0 +1,64 @@
+# This is a basic workflow that is manually triggered
+
+name: Generate SBOM
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  generate_sbom:
+    runs-on: macOS
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11' # o la versión que uses
+        distribution: 'adoptopenjdk'
+
+    - name: Set up Maven
+      uses: actions/setup-maven@v3
+      with:
+        maven-version: '3.8.x'
+
+    - name: Generate SBOM with CycloneDX Maven Plugin
+      id: generate
+      run: mvn -B -Dcyclonedx.outputFormat=json -DoutputFile=bom.json org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
+
+    - name: Upload SBOM as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom
+        path: bom.json
+        
+    - name: Get Project ID from Dependency-Track
+      id: get_project_id
+      run: |
+        PROJECT_ID=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}" "${{ env.DEPENDENCY_TRACK_URL }}/api/v1/project/lookup?name=${{ env.DEPENDENCY_TRACK_PROJECT_NAME }}" | jq -r '.uuid')
+        echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_OUTPUT
+      env:
+        DEPENDENCY_TRACK_URL: 'http://localhost:8080/' # Reemplaza
+        DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }} # Configura como secreto en GitHub
+        DEPENDENCY_TRACK_PROJECT_NAME: 'SbomLocal' # Reemplaza
+      shell: bash
+
+    - name: Upload SBOM to Dependency-Track
+      if: steps.get_project_id.outputs.PROJECT_ID
+      run: |
+        curl -X PUT \
+          -H "X-Api-Key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}" \
+          -F "bomFile=@bom.json" \
+          "${{ env.DEPENDENCY_TRACK_URL }}/api/v1/bom?projectId=${{ steps.get_project_id.outputs.PROJECT_ID }}"
+        echo "SBOM subido exitosamente a Dependency-Track"
+      env:
+        DEPENDENCY_TRACK_URL: 'http://localhost:8080/' # Reemplaza
+        DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }} # Configura como secreto en GitHub
+      shell: bash
+
+    
